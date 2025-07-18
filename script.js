@@ -655,6 +655,8 @@ function renderProcessConditionsTable() {
 function loadProcessConditionForEdit(event) {
     const streamName = event.target.dataset.streamName;
     const stream = currentProcessConditions[streamName];
+    const form = document.getElementById('process-condition-form');
+
     document.getElementById('pc-stream-name').value = streamName;
     document.getElementById('pc-gas-flow').value = stream.Gas_Flow_Sm3_D;
     document.getElementById('pc-pressure').value = stream.Pressure_kgf_cm2g;
@@ -666,15 +668,19 @@ function loadProcessConditionForEdit(event) {
     document.getElementById('pc-light-liq-density').value = stream.Light_Liquid_Density_kg_m3;
     document.getElementById('pc-heavy-liq-flow').value = stream.Heavy_Liquid_Flow_m3_D;
     document.getElementById('pc-heavy-liq-density').value = stream.Heavy_Liquid_Density_kg_m3;
-    document.getElementById('pc-stream-name').readOnly = true;
+    
+    // Store original name on the form's dataset to handle renames
+    form.dataset.originalName = streamName;
 }
 
 function deleteProcessCondition(event) {
     const streamName = event.target.dataset.streamName;
     if (confirm(`¿Eliminar la corriente '${streamName}'? También se eliminará de cualquier línea asociada.`)) {
         delete currentProcessConditions[streamName];
+        // Remove the deleted stream from any line that uses it
         for (const lineTag in currentLinesData) {
             currentLinesData[lineTag].Stream_Names = currentLinesData[lineTag].Stream_Names.filter(name => name !== streamName);
+            // Optional: delete line if it has no more streams
             if (currentLinesData[lineTag].Stream_Names.length === 0) {
                 delete currentLinesData[lineTag];
             }
@@ -714,13 +720,17 @@ function renderLinesTable() {
 function loadLineForEdit(event) {
     const lineTag = event.target.dataset.lineTag;
     const line = currentLinesData[lineTag];
+    const form = document.getElementById('line-form');
+
     document.getElementById('line-tag').value = lineTag;
     document.getElementById('line-design-pressure').value = line.Design_Pressure_kgf_cm2g || 0;
     document.getElementById('line-type').value = line.Type;
     const streamSelect = document.getElementById('line-stream-name');
     Array.from(streamSelect.options).forEach(opt => opt.selected = line.Stream_Names.includes(opt.value));
     document.getElementById('line-diameter-id').value = line.Selected_Diameter_ID;
-    document.getElementById('line-tag').readOnly = true;
+    
+    // Store original tag on the form's dataset to handle renames
+    form.dataset.originalTag = lineTag;
 }
 
 function deleteLine(event) {
@@ -1084,8 +1094,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
     document.getElementById('process-condition-form').addEventListener('submit', function(event) {
         event.preventDefault();
-        const streamName = document.getElementById('pc-stream-name').value.trim();
-        if (!streamName) { alert("El nombre de la corriente es obligatorio."); return; }
+        const form = this;
+        const newStreamName = document.getElementById('pc-stream-name').value.trim();
+        const originalStreamName = form.dataset.originalName;
+
+        if (!newStreamName) {
+            alert("El nombre de la corriente es obligatorio.");
+            return;
+        }
 
         const gasFlow = parseFloat(document.getElementById('pc-gas-flow').value) || 0;
         const lightLiqFlow = parseFloat(document.getElementById('pc-light-liq-flow').value) || 0;
@@ -1096,7 +1112,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (gasFlow > 0 && totalLiqFlow > 0) fluidType = "Multifásico";
         else if (gasFlow === 0 && totalLiqFlow > 0) fluidType = "Líquido";
 
-        currentProcessConditions[streamName] = {
+        const streamData = {
             Gas_Flow_Sm3_D: gasFlow,
             Pressure_kgf_cm2g: parseFloat(document.getElementById('pc-pressure').value) || 0,
             Temperature_C: parseFloat(document.getElementById('pc-temperature').value) || 0,
@@ -1109,39 +1125,85 @@ document.addEventListener('DOMContentLoaded', () => {
             Heavy_Liquid_Density_kg_m3: parseFloat(document.getElementById('pc-heavy-liq-density').value) || 0,
             Fluid_Type: fluidType
         };
+
+        // Handle rename logic
+        if (originalStreamName && originalStreamName !== newStreamName) {
+            if (currentProcessConditions[newStreamName]) {
+                alert(`Error: La corriente '${newStreamName}' ya existe. Por favor, elija otro nombre.`);
+                return;
+            }
+            currentProcessConditions[newStreamName] = streamData;
+            delete currentProcessConditions[originalStreamName];
+
+            // Update references in lines
+            for (const lineTag in currentLinesData) {
+                const line = currentLinesData[lineTag];
+                const streamIndex = line.Stream_Names.indexOf(originalStreamName);
+                if (streamIndex > -1) {
+                    line.Stream_Names[streamIndex] = newStreamName;
+                }
+            }
+        } else {
+            currentProcessConditions[newStreamName] = streamData;
+        }
+
         renderProcessConditionsTable();
-        renderLinesTable(); // Re-render lines table to update fluid type
-        this.reset();
-        document.getElementById('pc-stream-name').readOnly = false;
+        renderLinesTable();
+        form.reset();
+        delete form.dataset.originalName;
     });
 
     document.getElementById('pc-clear-form-btn').addEventListener('click', () => {
-        document.getElementById('process-condition-form').reset();
-        document.getElementById('pc-stream-name').readOnly = false;
+        const form = document.getElementById('process-condition-form');
+        form.reset();
+        delete form.dataset.originalName;
     });
 
     document.getElementById('line-form').addEventListener('submit', function(event) {
         event.preventDefault();
-        const lineTag = document.getElementById('line-tag').value.trim();
-        if (!lineTag) { alert("El TAG de línea es obligatorio."); return; }
+        const form = this;
+        const newLineTag = document.getElementById('line-tag').value.trim();
+        const originalLineTag = form.dataset.originalTag;
+
+        if (!newLineTag) {
+            alert("El TAG de línea es obligatorio.");
+            return;
+        }
 
         const selectedStreamNames = Array.from(document.getElementById('line-stream-name').selectedOptions).map(opt => opt.value);
-        if (selectedStreamNames.length === 0) { alert("Debe seleccionar al menos una corriente."); return; }
+        if (selectedStreamNames.length === 0) {
+            alert("Debe seleccionar al menos una corriente.");
+            return;
+        }
 
-        currentLinesData[lineTag] = {
+        const lineData = {
             "Selected_Diameter_ID": document.getElementById('line-diameter-id').value,
             "Stream_Names": selectedStreamNames,
             "Type": document.getElementById('line-type').value,
             "Design_Pressure_kgf_cm2g": parseFloat(document.getElementById('line-design-pressure').value) || 0,
         };
+
+        // Handle rename logic
+        if (originalLineTag && originalLineTag !== newLineTag) {
+            if (currentLinesData[newLineTag]) {
+                alert(`Error: La línea con TAG '${newLineTag}' ya existe. Por favor, elija otro TAG.`);
+                return;
+            }
+            currentLinesData[newLineTag] = lineData;
+            delete currentLinesData[originalLineTag];
+        } else {
+            currentLinesData[newLineTag] = lineData;
+        }
+
         renderLinesTable();
-        this.reset();
-        document.getElementById('line-tag').readOnly = false;
+        form.reset();
+        delete form.dataset.originalTag;
     });
 
     document.getElementById('line-clear-form-btn').addEventListener('click', () => {
-        document.getElementById('line-form').reset();
-        document.getElementById('line-tag').readOnly = false;
+        const form = document.getElementById('line-form');
+        form.reset();
+        delete form.dataset.originalTag;
     });
 
     document.getElementById('calculate-btn').addEventListener('click', performCalculations);
