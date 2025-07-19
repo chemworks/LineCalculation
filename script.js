@@ -630,14 +630,17 @@ function renderProcessConditionsTable() {
         const stream = currentProcessConditions[streamName];
         const fluidTypeClass = stream.Fluid_Type === 'Gas' ? 'fluid-gas' : stream.Fluid_Type === 'Líquido' ? 'fluid-liquid' : stream.Fluid_Type === 'Multifásico' ? 'fluid-multiphase' : 'fluid-undefined';
         
-        // Pre-calculate actual flows for display
         const actualGasFlow = calculateActualFlowRateGas(stream.Gas_Flow_Sm3_D, stream.Pressure_kgf_cm2g, stream.Temperature_C, stream.Z_Factor);
         const actualLLFlow = calculateActualFlowRateLiquid(stream.Light_Liquid_Flow_m3_D);
         const actualHLFlow = calculateActualFlowRateLiquid(stream.Heavy_Liquid_Flow_m3_D);
         const totalActualFlow = actualGasFlow + actualLLFlow + actualHLFlow;
 
         html += `<tr data-stream-name="${streamName}">
-            <td><button class="button is-small is-info is-outlined edit-pc-btn" data-stream-name="${streamName}">Editar</button> <button class="button is-small is-danger is-outlined delete-pc-btn" data-stream-name="${streamName}">Eliminar</button></td>
+            <td class="action-buttons">
+                <button class="button is-small is-info is-outlined edit-pc-btn" title="Editar" data-stream-name="${streamName}"><span class="icon is-small"><i class="fas fa-edit"></i></span></button>
+                <button class="button is-small is-link is-outlined copy-pc-btn" title="Copiar" data-stream-name="${streamName}"><span class="icon is-small"><i class="fas fa-copy"></i></span></button>
+                <button class="button is-small is-danger is-outlined delete-pc-btn" title="Eliminar" data-stream-name="${streamName}"><span class="icon is-small"><i class="fas fa-trash"></i></span></button>
+            </td>
             <td><strong>${streamName}</strong></td>
             <td><span class="tag ${fluidTypeClass}">${stream.Fluid_Type}</span></td>
             <td>${totalActualFlow.toFixed(4)}</td>
@@ -648,12 +651,13 @@ function renderProcessConditionsTable() {
     html += '</tbody></table>';
     container.innerHTML = html;
     document.querySelectorAll('.edit-pc-btn').forEach(b => b.addEventListener('click', loadProcessConditionForEdit));
+    document.querySelectorAll('.copy-pc-btn').forEach(b => b.addEventListener('click', copyProcessCondition));
     document.querySelectorAll('.delete-pc-btn').forEach(b => b.addEventListener('click', deleteProcessCondition));
     populateStreamDropdown();
 }
 
 function loadProcessConditionForEdit(event) {
-    const streamName = event.target.dataset.streamName;
+    const streamName = event.currentTarget.dataset.streamName;
     const stream = currentProcessConditions[streamName];
     const form = document.getElementById('process-condition-form');
 
@@ -669,18 +673,38 @@ function loadProcessConditionForEdit(event) {
     document.getElementById('pc-heavy-liq-flow').value = stream.Heavy_Liquid_Flow_m3_D;
     document.getElementById('pc-heavy-liq-density').value = stream.Heavy_Liquid_Density_kg_m3;
     
-    // Store original name on the form's dataset to handle renames
     form.dataset.originalName = streamName;
+    document.getElementById('pc-stream-name').focus();
+}
+
+function copyProcessCondition(event) {
+    const originalName = event.currentTarget.dataset.streamName;
+    const originalStream = currentProcessConditions[originalName];
+    
+    let newName = `${originalName}_copia`;
+    let counter = 1;
+    while(currentProcessConditions[newName]) {
+        newName = `${originalName}_copia_${counter}`;
+        counter++;
+    }
+
+    currentProcessConditions[newName] = JSON.parse(JSON.stringify(originalStream));
+    
+    renderProcessConditionsTable();
+    
+    // Directly load the new copied stream for editing
+    const newRow = document.querySelector(`tr[data-stream-name="${newName}"] .edit-pc-btn`);
+    if(newRow) {
+       newRow.click();
+    }
 }
 
 function deleteProcessCondition(event) {
-    const streamName = event.target.dataset.streamName;
+    const streamName = event.currentTarget.dataset.streamName;
     if (confirm(`¿Eliminar la corriente '${streamName}'? También se eliminará de cualquier línea asociada.`)) {
         delete currentProcessConditions[streamName];
-        // Remove the deleted stream from any line that uses it
         for (const lineTag in currentLinesData) {
             currentLinesData[lineTag].Stream_Names = currentLinesData[lineTag].Stream_Names.filter(name => name !== streamName);
-            // Optional: delete line if it has no more streams
             if (currentLinesData[lineTag].Stream_Names.length === 0) {
                 delete currentLinesData[lineTag];
             }
@@ -702,7 +726,11 @@ function renderLinesTable() {
         const flow_area_m2 = diameterInfo ? Math.PI * Math.pow((di_meters / 2), 2) : 0;
 
         html += `<tr data-line-tag="${lineTag}">
-            <td><button class="button is-small is-info is-outlined edit-line-btn" data-line-tag="${lineTag}">Editar</button> <button class="button is-small is-danger is-outlined delete-line-btn" data-line-tag="${lineTag}">Eliminar</button></td>
+            <td class="action-buttons">
+                <button class="button is-small is-info is-outlined edit-line-btn" title="Editar" data-line-tag="${lineTag}"><span class="icon is-small"><i class="fas fa-edit"></i></span></button>
+                <button class="button is-small is-link is-outlined copy-line-btn" title="Copiar" data-line-tag="${lineTag}"><span class="icon is-small"><i class="fas fa-copy"></i></span></button>
+                <button class="button is-small is-danger is-outlined delete-line-btn" title="Eliminar" data-line-tag="${lineTag}"><span class="icon is-small"><i class="fas fa-trash"></i></span></button>
+            </td>
             <td><strong>${lineTag}</strong></td>
             <td><span class="tag ${fluidTypeClass}">${lineFluidType}</span></td>
             <td>${di_meters.toFixed(4)}</td>
@@ -714,11 +742,12 @@ function renderLinesTable() {
     html += '</tbody></table>';
     container.innerHTML = html;
     document.querySelectorAll('.edit-line-btn').forEach(b => b.addEventListener('click', loadLineForEdit));
+    document.querySelectorAll('.copy-line-btn').forEach(b => b.addEventListener('click', copyLine));
     document.querySelectorAll('.delete-line-btn').forEach(b => b.addEventListener('click', deleteLine));
 }
 
 function loadLineForEdit(event) {
-    const lineTag = event.target.dataset.lineTag;
+    const lineTag = event.currentTarget.dataset.lineTag;
     const line = currentLinesData[lineTag];
     const form = document.getElementById('line-form');
 
@@ -729,12 +758,33 @@ function loadLineForEdit(event) {
     Array.from(streamSelect.options).forEach(opt => opt.selected = line.Stream_Names.includes(opt.value));
     document.getElementById('line-diameter-id').value = line.Selected_Diameter_ID;
     
-    // Store original tag on the form's dataset to handle renames
     form.dataset.originalTag = lineTag;
+    document.getElementById('line-tag').focus();
+}
+
+function copyLine(event) {
+    const originalTag = event.currentTarget.dataset.lineTag;
+    const originalLine = currentLinesData[originalTag];
+
+    let newTag = `${originalTag}_copia`;
+    let counter = 1;
+    while(currentLinesData[newTag]) {
+        newTag = `${originalTag}_copia_${counter}`;
+        counter++;
+    }
+
+    currentLinesData[newTag] = JSON.parse(JSON.stringify(originalLine));
+
+    renderLinesTable();
+
+    const newRow = document.querySelector(`tr[data-line-tag="${newTag}"] .edit-line-btn`);
+    if(newRow) {
+        newRow.click();
+    }
 }
 
 function deleteLine(event) {
-    const lineTag = event.target.dataset.lineTag;
+    const lineTag = event.currentTarget.dataset.lineTag;
     if (confirm(`¿Eliminar la línea '${lineTag}'?`)) {
         delete currentLinesData[lineTag];
         renderLinesTable();
@@ -841,7 +891,7 @@ function downloadCSV() {
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
-    link.setAttribute('download', `${projectInfo["Número de Proyecto"]}_listado_ingenieria.csv`);
+    link.setAttribute('download', `${projectInfo["Número de Proyecto"] || 'proyecto'}_listado_ingenieria.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -1024,10 +1074,9 @@ function loadProjectData(event) {
             currentLinesData = loadedData.linesData || {};
             Object.assign(designCriteria, loadedData.designCriteria);
             
-            // Ensure backward compatibility for loaded line data
             for (const lineTag in currentLinesData) {
                 if (!currentLinesData[lineTag].hasOwnProperty('Design_Pressure_kgf_cm2g')) {
-                    currentLinesData[lineTag].Design_Pressure_kgf_cm2g = 0; // Add with a default value
+                    currentLinesData[lineTag].Design_Pressure_kgf_cm2g = 0;
                 }
             }
 
@@ -1126,7 +1175,6 @@ document.addEventListener('DOMContentLoaded', () => {
             Fluid_Type: fluidType
         };
 
-        // Handle rename logic
         if (originalStreamName && originalStreamName !== newStreamName) {
             if (currentProcessConditions[newStreamName]) {
                 alert(`Error: La corriente '${newStreamName}' ya existe. Por favor, elija otro nombre.`);
@@ -1135,7 +1183,6 @@ document.addEventListener('DOMContentLoaded', () => {
             currentProcessConditions[newStreamName] = streamData;
             delete currentProcessConditions[originalStreamName];
 
-            // Update references in lines
             for (const lineTag in currentLinesData) {
                 const line = currentLinesData[lineTag];
                 const streamIndex = line.Stream_Names.indexOf(originalStreamName);
@@ -1144,6 +1191,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             }
         } else {
+            if (currentProcessConditions[newStreamName] && !originalStreamName) {
+                 alert(`Error: La corriente '${newStreamName}' ya existe. Por favor, elija otro nombre.`);
+                return;
+            }
             currentProcessConditions[newStreamName] = streamData;
         }
 
@@ -1183,7 +1234,6 @@ document.addEventListener('DOMContentLoaded', () => {
             "Design_Pressure_kgf_cm2g": parseFloat(document.getElementById('line-design-pressure').value) || 0,
         };
 
-        // Handle rename logic
         if (originalLineTag && originalLineTag !== newLineTag) {
             if (currentLinesData[newLineTag]) {
                 alert(`Error: La línea con TAG '${newLineTag}' ya existe. Por favor, elija otro TAG.`);
@@ -1192,6 +1242,10 @@ document.addEventListener('DOMContentLoaded', () => {
             currentLinesData[newLineTag] = lineData;
             delete currentLinesData[originalLineTag];
         } else {
+             if (currentLinesData[newLineTag] && !originalLineTag) {
+                alert(`Error: La línea con TAG '${newLineTag}' ya existe. Por favor, elija otro TAG.`);
+                return;
+            }
             currentLinesData[newLineTag] = lineData;
         }
 
@@ -1204,6 +1258,22 @@ document.addEventListener('DOMContentLoaded', () => {
         const form = document.getElementById('line-form');
         form.reset();
         delete form.dataset.originalTag;
+    });
+    
+    document.getElementById('delete-all-streams-btn').addEventListener('click', () => {
+        if(confirm("¿Está seguro que desea borrar TODAS las corrientes? Esta acción también borrará todas las líneas asociadas.")) {
+            currentProcessConditions = {};
+            currentLinesData = {};
+            renderProcessConditionsTable();
+            renderLinesTable();
+        }
+    });
+
+    document.getElementById('delete-all-lines-btn').addEventListener('click', () => {
+        if(confirm("¿Está seguro que desea borrar TODAS las líneas?")) {
+            currentLinesData = {};
+            renderLinesTable();
+        }
     });
 
     document.getElementById('calculate-btn').addEventListener('click', performCalculations);
