@@ -53,11 +53,79 @@
         .action-buttons .button {
             margin-right: 5px;
         }
+
+        /* --- Dark Mode Styles --- */
+        html.dark-mode {
+            background-color: #1a202c;
+            color: #cbd5e0;
+        }
+        .dark-mode body {
+             background-color: #1a202c;
+        }
+        .dark-mode .box, .dark-mode .card {
+            background-color: #2d3748;
+            color: #e2e8f0;
+        }
+        .dark-mode .title, .dark-mode .subtitle, .dark-mode .label, .dark-mode .card-header-title {
+            color: #e2e8f0;
+        }
+        .dark-mode .input, .dark-mode .select select, .dark-mode textarea {
+            background-color: #4a5568;
+            border-color: #718096;
+            color: #f7fafc;
+        }
+        .dark-mode .input::placeholder, .dark-mode textarea::placeholder {
+            color: #a0aec0;
+        }
+        .dark-mode .table {
+            background-color: #2d3748;
+            color: #e2e8f0;
+        }
+        .dark-mode .table thead td, .dark-mode .table thead th {
+            color: #f7fafc;
+            border-color: #4a5568;
+        }
+        .dark-mode .table tbody tr {
+            border-color: #4a5568;
+        }
+        .dark-mode .table.is-striped tbody tr:not(.is-selected):nth-child(even) {
+            background-color: #4a5568;
+        }
+        .dark-mode .table.is-hoverable tbody tr:not(.is-selected):hover {
+            background-color: #718096;
+        }
+        .dark-mode .button.is-light {
+            background-color: #4a5568;
+            color: #f7fafc;
+        }
+        .dark-mode .card-header {
+            border-bottom: 1px solid #4a5568;
+        }
+        .dark-mode .status-ok {
+            background-color: #2f855a !important;
+            color: #f0fff4;
+        }
+        .dark-mode .status-no-ok {
+            background-color: #c53030 !important;
+            color: #fff5f5;
+        }
+        .dark-mode .status-n-a {
+            background-color: #4a5568 !important;
+        }
+         .dark-mode .select:not(.is-multiple):not(.is-loading)::after {
+            border-color: #3182ce;
+        }
     </style>
 </head>
 <body>
     <section class="section">
-        <div class="container">
+        <div class="container" style="position: relative;">
+            <div style="position: absolute; top: 20px; right: 20px;">
+                <button id="dark-mode-toggle" class="button is-small">
+                    <span class="icon is-small"><i class="fas fa-moon"></i></span>
+                </button>
+            </div>
+
             <h1 class="title is-2 has-text-centered">Memoria de Cálculo de Líneas</h1>
             <p class="subtitle is-5 has-text-centered">Herramienta de dimensionamiento y verificación por tipo de fluido</p>
 
