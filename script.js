@@ -576,6 +576,7 @@ function performCalculations() {
     renderEngineeringListTable(allLineCalculationResults);
     document.getElementById('download-csv-btn').disabled = false;
     document.getElementById('download-pdf-btn').disabled = false;
+    document.getElementById('download-all-btn').disabled = false;
     document.getElementById('results-section').style.display = 'block';
 }
 
@@ -1103,6 +1104,7 @@ function loadProjectData(event) {
             document.getElementById('results-section').style.display = 'none';
             document.getElementById('download-csv-btn').disabled = true;
             document.getElementById('download-pdf-btn').disabled = true;
+            document.getElementById('download-all-btn').disabled = true;
             alert("Proyecto cargado exitosamente.");
         } catch (error) {
             alert(`Error al cargar el archivo JSON: ${error.message}.`);
@@ -1367,6 +1369,8 @@ function suggestPipeDiameter() {
         
         const lineFluidType = getLineFluidType({ Stream_Names: [streamName] });
         let requiredArea_m2 = 0;
+        let requiredArea_by_Velocity = 0;
+        let requiredArea_by_RhoV2 = 0;
 
         if (lineType === 'VL') {
             const { Temperature_C, MW, Z_Factor, Gamma } = streamInfo;
@@ -1375,7 +1379,7 @@ function suggestPipeDiameter() {
             const speed_of_sound = calculateSpeedOfSound(Gamma, Z_Factor, temperature_k, mw_kg_mol);
             const velocityLimit = designCriteria.max_mach_vent_lines * speed_of_sound;
             if (velocityLimit > 0) {
-                requiredArea_m2 = totalActualFlow / velocityLimit;
+                requiredArea_by_Velocity = totalActualFlow / velocityLimit;
             }
         } else {
             let velocityLimit = 0;
@@ -1384,9 +1388,23 @@ function suggestPipeDiameter() {
             else velocityLimit = designCriteria.max_velocity_multiphase_mps;
             
             if (velocityLimit > 0) {
-                requiredArea_m2 = totalActualFlow / velocityLimit;
+                requiredArea_by_Velocity = totalActualFlow / velocityLimit;
             }
         }
+        
+        if (lineFluidType !== "Líquido") {
+            const { Temperature_C, MW, Z_Factor, Light_Liquid_Density_kg_m3, Heavy_Liquid_Density_kg_m3 } = streamInfo;
+            const pressure_pa_abs = (streamInfo.Pressure_kgf_cm2g + constants.P_STANDARD_KGF_CM2A) * constants.KGFCMA_TO_PA;
+            const temperature_k = Temperature_C + constants.CELSIUS_TO_KELVIN;
+            const gas_density_at_cond = calculateGasDensity(pressure_pa_abs, temperature_k, MW, Z_Factor);
+            const { mixture_density } = calculateMixtureProperties(actualGasFlow, gas_density_at_cond, actualLLFlow, Light_Liquid_Density_kg_m3, actualHLFlow, Heavy_Liquid_Density_kg_m3);
+            
+            if (designCriteria.max_rhov2_kg_per_m_s2 > 0 && mixture_density > 0) {
+                requiredArea_by_RhoV2 = Math.sqrt((mixture_density * Math.pow(totalActualFlow, 2)) / designCriteria.max_rhov2_kg_per_m_s2);
+            }
+        }
+
+        requiredArea_m2 = Math.max(requiredArea_by_Velocity, requiredArea_by_RhoV2);
         
         if (requiredArea_m2 > 0) {
             const requiredDI_m = Math.sqrt(4 * requiredArea_m2 / Math.PI);
@@ -1403,21 +1421,17 @@ function suggestPipeDiameter() {
     }
 
     let bestFit = null;
-    let minDifference = Infinity;
+    const sortedDiameters = Object.entries(diametersData).sort(([, a], [, b]) => a.DI_mm - b.DI_mm);
 
-    for (const id in diametersData) {
-        const pipe = diametersData[id];
+    for (const [id, pipe] of sortedDiameters) {
         if (pipe.DI_mm >= maxRequiredDI_mm) {
-            const difference = pipe.DI_mm - maxRequiredDI_mm;
-            if (difference < minDifference) {
-                minDifference = difference;
-                bestFit = id;
-            }
+            bestFit = id;
+            break; 
         }
     }
 
     if (bestFit) {
-        suggestionEl.textContent = `Diámetro sugerido: ${bestFit} (DI: ${diametersData[bestFit].DI_mm}mm)`;
+        suggestionEl.textContent = `Diámetro sugerido (por criterio de flujo): ${bestFit} (DI: ${diametersData[bestFit].DI_mm}mm)`;
     } else {
         suggestionEl.textContent = 'El caudal es demasiado grande para los diámetros disponibles.';
     }
