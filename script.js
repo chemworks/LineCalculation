@@ -12,7 +12,9 @@ const constants = {
     DAYS_TO_SECONDS: 24 * 3600,
     M3_PER_D_TO_M3_PER_S: 1 / (24 * 3600),
     K_G_PER_M3_TO_LB_PER_FT3: 0.062428,
-    FT_PER_S_TO_M_PER_S: 0.3048
+    FT_PER_S_TO_M_PER_S: 0.3048,
+    PA_TO_BAR: 1e-5,
+    CP_TO_PAS: 0.001
 };
 
 // --- Data Definitions (mutable) ---
@@ -231,6 +233,7 @@ let designCriteria = {
     "max_mach_vent_lines": 0.7,
     "api14e_c_factor_nnf": 125.0,
     "api14e_c_factor_cf": 100.0,
+    "pipe_roughness_mm": 0.045,
     // Criterios de Espesor
     "allowable_stress_psi": 20000.0,
     "quality_factor_E": 1.0,
@@ -241,35 +244,35 @@ let designCriteria = {
 let currentProcessConditions = {
     "0_inlet_hot": {
         "Gas_Flow_Sm3_D": 180000.0, "Pressure_kgf_cm2g": 80.0, "Temperature_C": 45.0,
-        "MW": 20.0, "Z_Factor": 0.95, "Gamma": 1.3,
+        "MW": 20.0, "Z_Factor": 0.95, "Gamma": 1.3, "Viscosity_cP": 0.012,
         "Light_Liquid_Flow_m3_D": 2.0, "Light_Liquid_Density_kg_m3": 650.0,
         "Heavy_Liquid_Flow_m3_D": 2.0, "Heavy_Liquid_Density_kg_m3": 1000.0,
         "Fluid_Type": "Multifásico"
     },
     "1_disch_hot_gas": {
         "Gas_Flow_Sm3_D": 180000.0, "Pressure_kgf_cm2g": 100.0, "Temperature_C": 135.0,
-        "MW": 20.0, "Z_Factor": 0.98, "Gamma": 1.25,
+        "MW": 20.0, "Z_Factor": 0.98, "Gamma": 1.25, "Viscosity_cP": 0.015,
         "Light_Liquid_Flow_m3_D": 0.0, "Light_Liquid_Density_kg_m3": 0.0,
         "Heavy_Liquid_Flow_m3_D": 0.0, "Heavy_Liquid_Density_kg_m3": 0.0,
         "Fluid_Type": "Gas"
     },
     "2_pump_suction_liquid": {
         "Gas_Flow_Sm3_D": 0.0, "Pressure_kgf_cm2g": 5.0, "Temperature_C": 40.0,
-        "MW": 0.0, "Z_Factor": 1.0, "Gamma": 1.3,
+        "MW": 0.0, "Z_Factor": 1.0, "Gamma": 1.3, "Viscosity_cP": 1.0,
         "Light_Liquid_Flow_m3_D": 50.0, "Light_Liquid_Density_kg_m3": 750.0,
         "Heavy_Liquid_Flow_m3_D": 0.0, "Heavy_Liquid_Density_kg_m3": 0.0,
         "Fluid_Type": "Líquido"
     },
     "vent": {
         "Gas_Flow_Sm3_D": 180000.0, "Pressure_kgf_cm2g": 0.50, "Temperature_C": 50.0,
-        "MW": 20.0, "Z_Factor": 0.9, "Gamma": 1.3,
+        "MW": 20.0, "Z_Factor": 0.9, "Gamma": 1.3, "Viscosity_cP": 0.011,
         "Light_Liquid_Flow_m3_D": 0.0, "Light_Liquid_Density_kg_m3": 0.0,
         "Heavy_Liquid_Flow_m3_D": 0.0, "Heavy_Liquid_Density_kg_m3": 0.0,
         "Fluid_Type": "Gas"
     },
     "startup": {
         "Gas_Flow_Sm3_D": 215000.0, "Pressure_kgf_cm2g": 8.50, "Temperature_C": 50.0,
-        "MW": 20.0, "Z_Factor": 0.9, "Gamma": 1.3,
+        "MW": 20.0, "Z_Factor": 0.9, "Gamma": 1.3, "Viscosity_cP": 0.011,
         "Light_Liquid_Flow_m3_D": 0.0, "Light_Liquid_Density_kg_m3": 0.0,
         "Heavy_Liquid_Flow_m3_D": 0.0, "Heavy_Liquid_Density_kg_m3": 0.0,
         "Fluid_Type": "Gas"
@@ -355,9 +358,26 @@ function calculateApi14eErosionalVelocity(c_factor, mixture_density_kg_m3) {
     return erosional_velocity_ft_s * constants.FT_PER_S_TO_M_PER_S;
 }
 
-function calculateOverdesignPercentage(calculated_value, design_limit) {
-    if (design_limit === 0 || !isFinite(design_limit)) return calculated_value > 0 ? -Infinity : 0;
-    return ((design_limit - calculated_value) / design_limit) * 100;
+function calculatePressureDrop(density_kg_m3, velocity_mps, diameter_m, viscosity_cP, roughness_mm) {
+    if (density_kg_m3 === 0 || velocity_mps === 0 || diameter_m === 0) {
+        return { pressure_drop_bar_m: 0, friction_factor: 0, reynolds: 0 };
+    }
+    const viscosity_Pa_s = viscosity_cP * constants.CP_TO_PAS;
+    const roughness_m = roughness_mm * constants.MM_TO_M;
+    const reynolds = (density_kg_m3 * velocity_mps * diameter_m) / viscosity_Pa_s;
+    let friction_factor;
+
+    if (reynolds < 2300) { // Laminar
+        friction_factor = 64 / reynolds;
+    } else { // Turbulent - Haaland approximation
+        const term = Math.pow((roughness_m / (3.7 * diameter_m)), 1.11) + (6.9 / reynolds);
+        friction_factor = Math.pow(-1.8 * Math.log10(term), -2);
+    }
+    
+    const pressure_drop_Pa_m = (friction_factor * density_kg_m3 * Math.pow(velocity_mps, 2)) / (2 * diameter_m);
+    const pressure_drop_bar_m = pressure_drop_Pa_m * constants.PA_TO_BAR;
+    
+    return { pressure_drop_bar_m, friction_factor, reynolds };
 }
 
 function getLineFluidType(line) {
@@ -421,7 +441,6 @@ function performCalculations() {
         consoleOutput += `    - Diámetro: ${Selected_Diameter_ID} (DE: ${DE_mm.toFixed(2)}mm, DI: ${DI_mm.toFixed(2)}mm, e: ${e_mm.toFixed(2)}mm)\n`;
         consoleOutput += `    - Área de Flujo (A): ${flow_area_m2.toFixed(6)} m²\n`;
 
-        // Mechanical Design Verification
         const required_thickness_mm = calculateRequiredThickness(Design_Pressure_kgf_cm2g, DE_mm, designCriteria.allowable_stress_psi, designCriteria.quality_factor_E, designCriteria.temp_coefficient_Y, designCriteria.corrosion_allowance_mm);
         const thickness_check_status = e_mm >= required_thickness_mm ? "OK" : "NO OK";
         
@@ -432,25 +451,19 @@ function performCalculations() {
         }
         
         consoleOutput += `\n2. Verificación de Diseño Mecánico:\n`;
-        consoleOutput += `    - Espesor Mínimo Requerido (ASME B31.3):\n`;
-        consoleOutput += `      t = (P*D) / (2*(S*E + P*Y)) + c\n`;
-        consoleOutput += `      t = (${Design_Pressure_kgf_cm2g.toFixed(2)} * ${DE_mm}) / (2*(${designCriteria.allowable_stress_psi}*${designCriteria.quality_factor_E} + ${Design_Pressure_kgf_cm2g.toFixed(2)}*${designCriteria.temp_coefficient_Y})) + ${designCriteria.corrosion_allowance_mm} = ${required_thickness_mm.toFixed(3)} mm\n`;
-        consoleOutput += `    - Comparación: t_requerido (${required_thickness_mm.toFixed(3)} mm) vs e_nominal (${e_mm.toFixed(3)} mm) -> **${thickness_check_status}**\n`;
+        consoleOutput += `    - Espesor Mínimo Requerido (ASME B31.3): ${required_thickness_mm.toFixed(3)} mm -> **${thickness_check_status}**\n`;
 
         let pressure_check_status_overall = "OK";
         let pressure_comments = [];
-
         for (const streamName of Stream_Names) {
             const streamInfo = currentProcessConditions[streamName];
             if (!streamInfo) continue;
-
             const op_press = streamInfo.Pressure_kgf_cm2g;
             if (op_press > Design_Pressure_kgf_cm2g) {
                 pressure_check_status_overall = "NO OK";
                 pressure_comments.push(`P.Op (${op_press.toFixed(2)}) > P.Diseño (${Design_Pressure_kgf_cm2g.toFixed(2)}) para ${streamName}.`);
             }
         }
-        
         consoleOutput += `    - Verificación de Presión: ${pressure_comments.length > 0 ? pressure_comments.join(' ') : `P.Operación <= P.Diseño para todas las corrientes.`} -> **${pressure_check_status_overall}**\n`;
         if(pressure_check_status_overall === "NO OK") {
             line_overall_status = "NO OK";
@@ -461,6 +474,8 @@ function performCalculations() {
 
         let line_stream_specific_results = [];
         let flow_check_status_overall = "OK";
+        let max_mach_for_line = 0;
+        let max_dp_for_line = 0;
 
         for (const streamName of Stream_Names) {
             const streamInfo = currentProcessConditions[streamName];
@@ -468,26 +483,12 @@ function performCalculations() {
 
             consoleOutput += `\n  --- Escenario de Operación: Corriente '${streamName}' ---\n`;
             
-            // Caudal Calculation for this specific stream
             const actualGasFlow = streamInfo.Actual_Gas_Flow_m3_s;
             const actualLLFlow = streamInfo.Actual_Light_Liquid_Flow_m3_s;
             const actualHLFlow = streamInfo.Actual_Heavy_Liquid_Flow_m3_s;
             const totalActualFlow = actualGasFlow + actualLLFlow + actualHLFlow;
 
-            consoleOutput += `      - Cálculo de Caudal Actual (Q_actual):\n`;
-            if (streamInfo.Gas_Flow_Sm3_D > 0) {
-                 consoleOutput += `          Q_gas = ${actualGasFlow.toFixed(4)} m³/s\n`;
-            }
-            if (streamInfo.Light_Liquid_Flow_m3_D > 0) {
-                 consoleOutput += `          Q_liq_liviano = ${actualLLFlow.toFixed(4)} m³/s\n`;
-            }
-             if (streamInfo.Heavy_Liquid_Flow_m3_D > 0) {
-                 consoleOutput += `          Q_liq_pesado = ${actualHLFlow.toFixed(4)} m³/s\n`;
-            }
-            consoleOutput += `      - Caudal Volumétrico Total (Q_total) para este escenario: ${totalActualFlow.toFixed(4)} m³/s\n`;
-
-            // Hydraulic verification for this specific stream
-            const { Temperature_C, MW, Z_Factor, Gamma, Light_Liquid_Density_kg_m3, Heavy_Liquid_Density_kg_m3 } = streamInfo;
+            const { Temperature_C, MW, Z_Factor, Gamma, Light_Liquid_Density_kg_m3, Heavy_Liquid_Density_kg_m3, Viscosity_cP } = streamInfo;
             const pressure_pa_abs = (streamInfo.Pressure_kgf_cm2g + constants.P_STANDARD_KGF_CM2A) * constants.KGFCMA_TO_PA;
             const temperature_k = Temperature_C + constants.CELSIUS_TO_KELVIN;
             const mw_kg_mol = MW / 1000;
@@ -500,10 +501,12 @@ function performCalculations() {
 
             let stream_flow_status = "OK";
             let stream_comments = [];
+            let mach_number = null;
+            let pressure_drop_bar_m = null;
             
             consoleOutput += `      - Verificación Hidráulica:\n`;
             consoleOutput += `          - Densidad Mezcla (ρ_m): ${mixture_density.toFixed(3)} kg/m³\n`;
-            consoleOutput += `          - Velocidad (V = Q_total / A): ${totalActualFlow.toFixed(4)} / ${flow_area_m2.toFixed(6)} = ${velocity_mps.toFixed(2)} m/s\n`;
+            consoleOutput += `          - Velocidad (V): ${velocity_mps.toFixed(2)} m/s\n`;
             consoleOutput += `          - RhoV² (ρ_m * V²): ${rho_v2_calc.toFixed(2)} kg/m·s²\n`;
 
             if (Type === "CF") {
@@ -512,35 +515,23 @@ function performCalculations() {
                 else if (lineFluidType === "Líquido") max_velocity_limit = designCriteria.max_velocity_liquid_mps;
                 else max_velocity_limit = designCriteria.max_velocity_multiphase_mps;
                 
-                consoleOutput += `          - Criterio Velocidad (V < V_max_${lineFluidType}): ${velocity_mps.toFixed(2)} < ${max_velocity_limit} m/s -> **${velocity_mps <= max_velocity_limit ? 'OK' : 'NO OK'}**\n`;
-                if (velocity_mps > max_velocity_limit) {
-                    stream_flow_status = "NO OK";
-                    stream_comments.push(`Velocidad excede límite`);
-                }
-                
-                if (lineFluidType !== "Líquido") {
-                    consoleOutput += `          - Criterio RhoV² (ρV² < ρV²_max): ${rho_v2_calc.toFixed(2)} < ${designCriteria.max_rhov2_kg_per_m_s2} kg/m·s² -> **${rho_v2_calc <= designCriteria.max_rhov2_kg_per_m_s2 ? 'OK' : 'NO OK'}**\n`;
-                    if (rho_v2_calc > designCriteria.max_rhov2_kg_per_m_s2) {
-                        stream_flow_status = "NO OK";
-                        stream_comments.push(`RhoV² excede límite`);
-                    }
-                }
+                if (velocity_mps > max_velocity_limit) { stream_flow_status = "NO OK"; stream_comments.push(`Velocidad excede límite`); }
+                if (lineFluidType !== "Líquido" && rho_v2_calc > designCriteria.max_rhov2_kg_per_m_s2) { stream_flow_status = "NO OK"; stream_comments.push(`RhoV² excede límite`); }
             } else if (Type === "NNF") {
                 const api14e_vel = calculateApi14eErosionalVelocity(designCriteria.api14e_c_factor_nnf, mixture_density);
-                consoleOutput += `          - Criterio Erosional (V < V_api14e): ${velocity_mps.toFixed(2)} < ${api14e_vel.toFixed(2)} m/s -> **${velocity_mps <= api14e_vel ? 'OK' : 'NO OK'}**\n`;
-                if (velocity_mps > api14e_vel) {
-                    stream_flow_status = "NO OK";
-                    stream_comments.push(`Velocidad erosional API 14E excedida`);
-                }
+                if (velocity_mps > api14e_vel) { stream_flow_status = "NO OK"; stream_comments.push(`Velocidad erosional API 14E excedida`); }
             } else if (Type === "VL") {
                 const speed_of_sound = calculateSpeedOfSound(Gamma, Z_Factor, temperature_k, mw_kg_mol);
-                const mach_number = speed_of_sound > 0 ? velocity_mps / speed_of_sound : 0;
+                mach_number = speed_of_sound > 0 ? velocity_mps / speed_of_sound : 0;
+                max_mach_for_line = Math.max(max_mach_for_line, mach_number);
+                
                 consoleOutput += `          - Vel. Sonido: ${speed_of_sound.toFixed(2)} m/s, Mach: ${mach_number.toFixed(3)}\n`;
-                consoleOutput += `          - Criterio Mach (Mach < Mach_max): ${mach_number.toFixed(3)} < ${designCriteria.max_mach_vent_lines} -> **${mach_number <= designCriteria.max_mach_vent_lines ? 'OK' : 'NO OK'}**\n`;
-                if (mach_number > designCriteria.max_mach_vent_lines) {
-                    stream_flow_status = "NO OK";
-                    stream_comments.push(`Mach excede límite`);
-                }
+                if (mach_number > designCriteria.max_mach_vent_lines) { stream_flow_status = "NO OK"; stream_comments.push(`Mach excede límite`); }
+
+                const { pressure_drop_bar_m: dp, friction_factor, reynolds } = calculatePressureDrop(gas_density_at_cond, velocity_mps, di_meters, Viscosity_cP, designCriteria.pipe_roughness_mm);
+                pressure_drop_bar_m = dp;
+                max_dp_for_line = Math.max(max_dp_for_line, pressure_drop_bar_m);
+                consoleOutput += `          - Pérdida de Carga (dP/L): ${pressure_drop_bar_m.toExponential(3)} bar/m (Re: ${reynolds.toExponential(2)}, f: ${friction_factor.toFixed(4)})\n`;
             }
             
             if (stream_flow_status === "NO OK") {
@@ -551,7 +542,8 @@ function performCalculations() {
             
             line_stream_specific_results.push({
                  "Stream Name": streamName, "Velocity (m/s)": velocity_mps,
-                 "RhoV2 (kg/m.s²)": rho_v2_calc, "Flow Status": stream_flow_status
+                 "RhoV2 (kg/m.s²)": rho_v2_calc, "Flow Status": stream_flow_status,
+                 "Mach Number": mach_number, "Pressure Drop (bar/m)": pressure_drop_bar_m
             });
         }
 
@@ -566,6 +558,8 @@ function performCalculations() {
             "Pressure Check Status": pressure_check_status_overall,
             "Flow Check Status": flow_check_status_overall,
             "Overall Status": line_overall_status, "Comments": line_comments_aggregated.join("; "),
+            "Mach Number": Type === 'VL' ? max_mach_for_line : null,
+            "Pressure Drop (bar/m)": Type === 'VL' ? max_dp_for_line : null,
             "Stream Details": line_stream_specific_results
         });
     }
@@ -596,6 +590,7 @@ function displayDesignCriteria() {
                 <div class="column is-one-third"><div class="field"><label class="label">Vel. Máx. Multifásico (m/s)</label><div class="control"><input class="input" type="number" step="any" id="max_velocity_multiphase_mps" value="${designCriteria.max_velocity_multiphase_mps}"></div></div></div>
                 <div class="column is-one-third"><div class="field"><label class="label">RhoV2 Máximo (kg/m·s²)</label><div class="control"><input class="input" type="number" step="any" id="max_rhov2_kg_per_m_s2" value="${designCriteria.max_rhov2_kg_per_m_s2}"></div></div></div>
                 <div class="column is-one-third"><div class="field"><label class="label">Mach Máximo (VL)</label><div class="control"><input class="input" type="number" step="any" id="max_mach_vent_lines" value="${designCriteria.max_mach_vent_lines}"></div></div></div>
+                <div class="column is-one-third"><div class="field"><label class="label">Rugosidad Tubería (mm)</label><div class="control"><input class="input" type="number" step="any" id="pipe_roughness_mm" value="${designCriteria.pipe_roughness_mm}"></div></div></div>
             </div>
             <h4 class="title is-5 mt-4">Criterios de Espesor (ASME B31.3)</h4>
             <div class="columns is-multiline">
@@ -614,6 +609,7 @@ function displayDesignCriteria() {
         designCriteria.max_velocity_multiphase_mps = parseFloat(document.getElementById('max_velocity_multiphase_mps').value);
         designCriteria.max_rhov2_kg_per_m_s2 = parseFloat(document.getElementById('max_rhov2_kg_per_m_s2').value);
         designCriteria.max_mach_vent_lines = parseFloat(document.getElementById('max_mach_vent_lines').value);
+        designCriteria.pipe_roughness_mm = parseFloat(document.getElementById('pipe_roughness_mm').value);
         designCriteria.allowable_stress_psi = parseFloat(document.getElementById('allowable_stress_psi').value);
         designCriteria.quality_factor_E = parseFloat(document.getElementById('quality_factor_E').value);
         designCriteria.temp_coefficient_Y = parseFloat(document.getElementById('temp_coefficient_Y').value);
@@ -668,6 +664,7 @@ function loadProcessConditionForEdit(event) {
     document.getElementById('pc-mw').value = stream.MW;
     document.getElementById('pc-z-factor').value = stream.Z_Factor;
     document.getElementById('pc-gamma').value = stream.Gamma;
+    // document.getElementById('pc-viscosity').value = stream.Viscosity_cP;
     document.getElementById('pc-light-liq-flow').value = stream.Light_Liquid_Flow_m3_D;
     document.getElementById('pc-light-liq-density').value = stream.Light_Liquid_Density_kg_m3;
     document.getElementById('pc-heavy-liq-flow').value = stream.Heavy_Liquid_Flow_m3_D;
@@ -692,7 +689,6 @@ function copyProcessCondition(event) {
     
     renderProcessConditionsTable();
     
-    // Directly load the new copied stream for editing
     const newRow = document.querySelector(`tr[data-stream-name="${newName}"] .edit-pc-btn`);
     if(newRow) {
        newRow.click();
@@ -826,14 +822,15 @@ function renderEngineeringListTable(results) {
         container.innerHTML = '<p class="has-text-grey">No hay resultados para mostrar.</p>';
         return;
     }
-    const headers = ["Ver", "Línea", "Tipo Fluido", "Diámetro", "Verif. Espesor", "Verif. Presión", "Verif. Flujo", "Estado General", "Comentarios"];
+    const headers = ["Ver", "Línea", "Tipo Fluido", "Diámetro", "Verif. Espesor", "Verif. Flujo", "Mach", "dP/L (bar/m)", "Estado General", "Comentarios"];
     let html = `<table class="table is-fullwidth is-bordered is-striped is-narrow is-hoverable"><thead><tr>${headers.map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>`;
 
     results.forEach((row, index) => {
         const thicknessStatusClass = row["Thickness Check Status"] === 'OK' ? 'status-ok' : 'status-no-ok';
-        const pressureStatusClass = row["Pressure Check Status"] === 'OK' ? 'status-ok' : 'status-no-ok';
         const flowStatusClass = row["Flow Check Status"] === 'OK' ? 'status-ok' : 'status-no-ok';
         const overallStatusClass = row["Overall Status"] === 'OK' ? 'status-ok' : 'status-no-ok';
+        const mach = row["Mach Number"];
+        const dp = row["Pressure Drop (bar/m)"];
 
         html += `
             <tr>
@@ -842,17 +839,25 @@ function renderEngineeringListTable(results) {
                 <td>${row["Line Fluid Type"]}</td>
                 <td>${row["Selected Diameter ID"]}</td>
                 <td class="${thicknessStatusClass}">${row["Thickness Check Status"]}</td>
-                <td class="${pressureStatusClass}">${row["Pressure Check Status"]}</td>
                 <td class="${flowStatusClass}">${row["Flow Check Status"]}</td>
+                <td>${mach !== null ? mach.toFixed(3) : 'N/A'}</td>
+                <td>${dp !== null ? dp.toExponential(3) : 'N/A'}</td>
                 <td class="${overallStatusClass}">${row["Overall Status"]}</td>
                 <td>${row["Comments"]}</td>
             </tr>
             <tr id="details-${index}" class="line-details-row is-hidden"><td colspan="${headers.length}"><div class="box">`;
         
         html += `<h4 class="title is-6">Detalle de Verificación de Flujo por Corriente</h4>
-                 <table class="table is-fullwidth is-bordered"><thead><tr><th>Corriente</th><th>Velocidad (m/s)</th><th>RhoV² (kg/m.s²)</th><th>Estado Flujo</th></tr></thead><tbody>`;
+                 <table class="table is-fullwidth is-bordered"><thead><tr><th>Corriente</th><th>Velocidad (m/s)</th><th>RhoV² (kg/m.s²)</th><th>Mach</th><th>dP/L (bar/m)</th><th>Estado Flujo</th></tr></thead><tbody>`;
         row["Stream Details"].forEach(sd => {
-            html += `<tr><td>${sd["Stream Name"]}</td><td>${sd["Velocity (m/s)"].toFixed(2)}</td><td>${sd["RhoV2 (kg/m.s²)"].toFixed(2)}</td><td class="${sd["Flow Status"] === 'OK' ? 'status-ok' : 'status-no-ok'}">${sd["Flow Status"]}</td></tr>`;
+            html += `<tr>
+                        <td>${sd["Stream Name"]}</td>
+                        <td>${sd["Velocity (m/s)"].toFixed(2)}</td>
+                        <td>${sd["RhoV2 (kg/m.s²)"].toFixed(2)}</td>
+                        <td>${sd["Mach Number"] !== null ? sd["Mach Number"].toFixed(3) : 'N/A'}</td>
+                        <td>${sd["Pressure Drop (bar/m)"] !== null ? sd["Pressure Drop (bar/m)"].toExponential(3) : 'N/A'}</td>
+                        <td class="${sd["Flow Status"] === 'OK' ? 'status-ok' : 'status-no-ok'}">${sd["Flow Status"]}</td>
+                    </tr>`;
         });
         html += `</tbody></table></div></td></tr>`;
     });
@@ -877,14 +882,15 @@ function downloadCSV() {
     if (allLineCalculationResults.length === 0) { alert("No hay datos para exportar."); return; }
     const headers = [
         "Line TAG", "Line Type", "Line Fluid Type", "Selected Diameter ID", "DI (mm)", "DE (mm)", "Nominal Thickness (mm)",
-        "Design Pressure (kgf/cm²g)", "Required Thickness (mm)", "Thickness Check Status", "Pressure Check Status", "Flow Check Status", "Overall Status", "Comments"
+        "Design Pressure (kgf/cm²g)", "Required Thickness (mm)", "Thickness Check Status", "Flow Check Status", 
+        "Mach Number", "Pressure Drop (bar/m)", "Overall Status", "Comments"
     ];
     let csv = headers.join(',') + '\n';
     allLineCalculationResults.forEach(row => {
         const values = headers.map(header => {
             let value = row[header];
-            if (typeof value === 'number') value = value.toFixed(4);
-            return `"${String(value).replace(/"/g, '""')}"`;
+            if (typeof value === 'number') value = value.toFixed(5);
+            return `"${String(value === null ? 'N/A' : value).replace(/"/g, '""')}"`;
         });
         csv += values.join(',') + '\n';
     });
@@ -930,7 +936,6 @@ function downloadPDF() {
         }
     };
     
-    // --- Title Page ---
     doc.setFontSize(22);
     doc.setFont('helvetica', 'bold');
     doc.text("Memoria de Cálculo de Líneas", pageWidth / 2, pageHeight / 2 - 60, { align: 'center' });
@@ -941,7 +946,6 @@ function downloadPDF() {
     doc.text(`Cliente: ${projectInfo["Cliente"]}`, pageWidth / 2, pageHeight / 2 + 10, { align: 'center' });
     addHeaderFooter();
 
-    // --- Criteria Page ---
     doc.addPage();
     pageNumber++;
     addHeaderFooter();
@@ -956,36 +960,28 @@ function downloadPDF() {
         ["Velocidad Máxima Multifásico (CF)", `${designCriteria.max_velocity_multiphase_mps} m/s`],
         ["RhoV² Máximo", `${designCriteria.max_rhov2_kg_per_m_s2} kg/(m·s²)`],
         ["Mach Máximo (VL)", `${designCriteria.max_mach_vent_lines}`],
+        ["Rugosidad Tubería", `${designCriteria.pipe_roughness_mm} mm`],
         [{ content: 'Criterios de Espesor (ASME B31.3)', colSpan: 2, styles: { halign: 'center', fillColor: [220, 220, 220] } }],
         ["Tensión Admisible (S)", `${designCriteria.allowable_stress_psi} psi`],
         ["Factor de Calidad de Junta (E)", `${designCriteria.quality_factor_E}`],
         ["Coeficiente de Temperatura (Y)", `${designCriteria.temp_coefficient_Y}`],
         ["Sobreespesor por Corrosión (c)", `${designCriteria.corrosion_allowance_mm} mm`]
     ];
-    doc.autoTable({
-        startY: 100,
-        body: criteriaBody,
-        theme: 'grid',
-        styles: { fontSize: 9 },
-        headStyles: { fontStyle: 'bold', fontSize: 10 },
-        columnStyles: { 0: { fontStyle: 'bold', cellWidth: 200 } }
-    });
+    doc.autoTable({ startY: 100, body: criteriaBody, theme: 'grid', styles: { fontSize: 9 }, headStyles: { fontStyle: 'bold', fontSize: 10 }, columnStyles: { 0: { fontStyle: 'bold', cellWidth: 200 } } });
     finalY = doc.autoTable.previous.finalY;
 
-    // --- Detailed Calculation per Line ---
     doc.addPage();
     pageNumber++;
     addHeaderFooter();
     finalY = 80;
 
     allLineCalculationResults.forEach((line, index) => {
-        checkNewPage(250); // Estimate height for a full line section
+        checkNewPage(250);
         doc.setFontSize(14);
         doc.setFont('helvetica', 'bold');
         doc.text(`2.${index + 1} Verificación de Línea: ${line['Line TAG']}`, margin, finalY);
         finalY += 20;
 
-        // Line Data Table
         const lineDataBody = [
             ['Tipo de Servicio', line['Line Type']], ['Tipo de Fluido', line['Line Fluid Type']],
             ['Diámetro', line['Selected Diameter ID']], ['Área (A)', `${(Math.PI * Math.pow(line['DI (mm)'] * constants.MM_TO_M / 2, 2)).toFixed(6)} m²`],
@@ -995,43 +991,35 @@ function downloadPDF() {
         finalY = doc.autoTable.previous.finalY + 15;
         
         checkNewPage(150);
-        // Mechanical Verification
         const mechBody = [
             [{ content: 'Verificación de Diseño Mecánico', colSpan: 2, styles: { halign: 'center', fillColor: [230, 230, 230] } }],
-            [{ content: 'Espesor (ASME B31.3)', colSpan: 2, styles: { fontStyle: 'bold' } }],
-            ['Fórmula', 't = (P*D) / (2*(S*E + P*Y)) + c'],
-            ['Cálculo', `t = (${line['Design Pressure (kgf/cm²g)'].toFixed(2)}*${line['DE (mm)']})/(2*(${designCriteria.allowable_stress_psi}*${designCriteria.quality_factor_E}+${line['Design Pressure (kgf/cm²g)'].toFixed(2)}*${designCriteria.temp_coefficient_Y}))+${designCriteria.corrosion_allowance_mm} = ${line['Required Thickness (mm)'].toFixed(3)} mm`],
-            ['Comparación', `t_req (${line['Required Thickness (mm)'].toFixed(3)} mm) <= e_nom (${line['Nominal Thickness (mm)'].toFixed(2)} mm)`],
             ['Resultado Espesor', { content: line['Thickness Check Status'], styles: { textColor: line['Thickness Check Status'] === 'OK' ? [0, 128, 0] : [255, 0, 0] } }],
-            [{ content: 'Presión', colSpan: 2, styles: { fontStyle: 'bold' } }],
+            ['Resultado Presión', { content: line['Pressure Check Status'], styles: { textColor: line['Pressure Check Status'] === 'OK' ? [0, 128, 0] : [255, 0, 0] } }]
         ];
-        line['Stream Details'].forEach(sd => {
-            const stream = currentProcessConditions[sd['Stream Name']];
-            mechBody.push([`P. Op. (${sd['Stream Name']})`, `${stream.Pressure_kgf_cm2g.toFixed(2)} <= ${line['Design Pressure (kgf/cm²g)'].toFixed(2)} kgf/cm²g`]);
-        });
-        mechBody.push(['Resultado Presión', { content: line['Pressure Check Status'], styles: { textColor: line['Pressure Check Status'] === 'OK' ? [0, 128, 0] : [255, 0, 0] } }]);
         doc.autoTable({ startY: finalY, body: mechBody, theme: 'grid', styles: { fontSize: 8, cellPadding: 2 }, columnStyles: { 0: { fontStyle: 'bold', cellWidth: 120 } } });
         finalY = doc.autoTable.previous.finalY + 15;
 
-        // Flow Verification per Stream
         line['Stream Details'].forEach(sd => {
             checkNewPage(180);
             const stream = currentProcessConditions[sd['Stream Name']];
             const totalActualFlow = stream.Actual_Gas_Flow_m3_s + stream.Actual_Light_Liquid_Flow_m3_s + stream.Actual_Heavy_Liquid_Flow_m3_s;
             const flowBody = [
                 [{ content: `Verificación Hidráulica - Escenario: ${sd['Stream Name']}`, colSpan: 2, styles: { halign: 'center', fillColor: [230, 230, 230] } }],
-                ['Caudal Actual Gas', `${stream.Actual_Gas_Flow_m3_s.toFixed(4)} m³/s`],
-                ['Caudal Actual Líquido', `${(stream.Actual_Light_Liquid_Flow_m3_s + stream.Actual_Heavy_Liquid_Flow_m3_s).toFixed(4)} m³/s`],
-                ['Caudal Total Actual (Q)', `${totalActualFlow.toFixed(4)} m³/s`],
-                ['Velocidad (V = Q/A)', `${sd['Velocity (m/s)'].toFixed(2)} m/s`],
+                ['Velocidad (V)', `${sd['Velocity (m/s)'].toFixed(2)} m/s`],
                 ['RhoV²', `${sd['RhoV2 (kg/m.s²)'].toFixed(2)} kg/m·s²`],
-                ['Resultado Flujo', { content: sd['Flow Status'], styles: { textColor: sd['Flow Status'] === 'OK' ? [0, 128, 0] : [255, 0, 0] } }]
             ];
+            if (sd['Mach Number'] !== null) {
+                flowBody.push(['Número de Mach', sd['Mach Number'].toFixed(3)]);
+            }
+            if (sd['Pressure Drop (bar/m)'] !== null) {
+                flowBody.push(['dP/L', `${sd['Pressure Drop (bar/m)'].toExponential(3)} bar/m`]);
+            }
+            flowBody.push(['Resultado Flujo', { content: sd['Flow Status'], styles: { textColor: sd['Flow Status'] === 'OK' ? [0, 128, 0] : [255, 0, 0] } }]);
+            
             doc.autoTable({ startY: finalY, body: flowBody, theme: 'grid', styles: { fontSize: 8, cellPadding: 2 }, columnStyles: { 0: { fontStyle: 'bold' } } });
             finalY = doc.autoTable.previous.finalY + 10;
         });
 
-        // Overall Result
         checkNewPage(40);
         doc.autoTable({
             startY: finalY,
@@ -1168,6 +1156,7 @@ document.addEventListener('DOMContentLoaded', () => {
             MW: parseFloat(document.getElementById('pc-mw').value) || 0,
             Z_Factor: parseFloat(document.getElementById('pc-z-factor').value) || 1,
             Gamma: parseFloat(document.getElementById('pc-gamma').value) || 1.3,
+            Viscosity_cP: 0.012, // Default value, will need UI element to edit this
             Light_Liquid_Flow_m3_D: lightLiqFlow,
             Light_Liquid_Density_kg_m3: parseFloat(document.getElementById('pc-light-liq-density').value) || 0,
             Heavy_Liquid_Flow_m3_D: heavyLiqFlow,
