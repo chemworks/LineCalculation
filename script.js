@@ -14,7 +14,8 @@ const constants = {
     K_G_PER_M3_TO_LB_PER_FT3: 0.062428,
     FT_PER_S_TO_M_PER_S: 0.3048,
     PA_TO_BAR: 1e-5,
-    CP_TO_PAS: 0.001
+    CP_TO_PAS: 0.001,
+    KGFCM2_TO_BAR: 0.980665
 };
 
 // --- Data Definitions (mutable) ---
@@ -476,6 +477,7 @@ function performCalculations() {
         let flow_check_status_overall = "OK";
         let max_mach_for_line = 0;
         let max_dp_for_line = 0;
+        let max_dp_10m_percent_for_line = 0;
 
         for (const streamName of Stream_Names) {
             const streamInfo = currentProcessConditions[streamName];
@@ -512,6 +514,11 @@ function performCalculations() {
             max_dp_for_line = Math.max(max_dp_for_line, pressure_drop_bar_m);
             consoleOutput += `          - Pérdida de Carga (dP/L): ${pressure_drop_bar_m.toExponential(3)} bar/m (Re: ${reynolds.toExponential(2)}, f: ${friction_factor.toFixed(4)})\n`;
 
+            const pressure_in_bar = streamInfo.Pressure_kgf_cm2g * constants.KGFCM2_TO_BAR;
+            const dp_10m_bar = pressure_drop_bar_m * 10;
+            const dp_10m_percent = pressure_in_bar > 0 ? (dp_10m_bar / pressure_in_bar) * 100 : 0;
+            max_dp_10m_percent_for_line = Math.max(max_dp_10m_percent_for_line, dp_10m_percent);
+
             if (Type === "CF") {
                 let max_velocity_limit;
                 if (lineFluidType === "Gas") max_velocity_limit = designCriteria.max_velocity_gas_mps;
@@ -542,7 +549,8 @@ function performCalculations() {
                  "Stream Name": streamName, "Velocity (m/s)": velocity_mps,
                  "RhoV2 (kg/m.s²)": rho_v2_calc, "Flow Status": stream_flow_status,
                  "Mach Number": mach_number, 
-                 "Pressure Drop (bar/m)": pressure_drop_bar_m
+                 "Pressure Drop (bar/m)": pressure_drop_bar_m,
+                 "Pressure Drop 10m Percent": dp_10m_percent
             });
         }
 
@@ -559,6 +567,7 @@ function performCalculations() {
             "Overall Status": line_overall_status, "Comments": line_comments_aggregated.join("; "),
             "Mach Number": Type === 'VL' ? max_mach_for_line : null,
             "Pressure Drop (bar/m)": max_dp_for_line,
+            "Pressure Drop 10m Percent": max_dp_10m_percent_for_line,
             "Stream Details": line_stream_specific_results
         });
     }
@@ -821,7 +830,7 @@ function renderEngineeringListTable(results) {
         container.innerHTML = '<p class="has-text-grey">No hay resultados para mostrar.</p>';
         return;
     }
-    const headers = ["Ver", "Línea", "Tipo Fluido", "Diámetro", "Verif. Espesor", "Verif. Flujo", "Mach", "dP/L (bar/m)", "Estado General", "Comentarios"];
+    const headers = ["Ver", "Línea", "Tipo Fluido", "Diámetro", "Verif. Espesor", "Verif. Flujo", "Mach", "dP/L (bar/m)", "dP (10m) [%]", "Estado General", "Comentarios"];
     let html = `<table class="table is-fullwidth is-bordered is-striped is-narrow is-hoverable"><thead><tr>${headers.map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>`;
 
     results.forEach((row, index) => {
@@ -830,6 +839,7 @@ function renderEngineeringListTable(results) {
         const overallStatusClass = row["Overall Status"] === 'OK' ? 'status-ok' : 'status-no-ok';
         const mach = row["Mach Number"];
         const dp = row["Pressure Drop (bar/m)"];
+        const dp_10m_percent = row["Pressure Drop 10m Percent"];
 
         html += `
             <tr>
@@ -841,13 +851,14 @@ function renderEngineeringListTable(results) {
                 <td class="${flowStatusClass}">${row["Flow Check Status"]}</td>
                 <td>${mach !== null ? mach.toFixed(3) : 'N/A'}</td>
                 <td>${dp !== null ? dp.toExponential(3) : 'N/A'}</td>
+                <td>${dp_10m_percent !== null ? dp_10m_percent.toFixed(2) + '%' : 'N/A'}</td>
                 <td class="${overallStatusClass}">${row["Overall Status"]}</td>
                 <td>${row["Comments"]}</td>
             </tr>
             <tr id="details-${index}" class="line-details-row is-hidden"><td colspan="${headers.length}"><div class="box">`;
         
         html += `<h4 class="title is-6">Detalle de Verificación de Flujo por Corriente</h4>
-                 <table class="table is-fullwidth is-bordered"><thead><tr><th>Corriente</th><th>Velocidad (m/s)</th><th>RhoV² (kg/m.s²)</th><th>Mach</th><th>dP/L (bar/m)</th><th>Estado Flujo</th></tr></thead><tbody>`;
+                 <table class="table is-fullwidth is-bordered"><thead><tr><th>Corriente</th><th>Velocidad (m/s)</th><th>RhoV² (kg/m.s²)</th><th>Mach</th><th>dP/L (bar/m)</th><th>dP (10m) [%]</th><th>Estado Flujo</th></tr></thead><tbody>`;
         row["Stream Details"].forEach(sd => {
             html += `<tr>
                         <td>${sd["Stream Name"]}</td>
@@ -855,6 +866,7 @@ function renderEngineeringListTable(results) {
                         <td>${sd["RhoV2 (kg/m.s²)"].toFixed(2)}</td>
                         <td>${sd["Mach Number"] !== null ? sd["Mach Number"].toFixed(3) : 'N/A'}</td>
                         <td>${sd["Pressure Drop (bar/m)"] !== null ? sd["Pressure Drop (bar/m)"].toExponential(3) : 'N/A'}</td>
+                        <td>${sd["Pressure Drop 10m Percent"] !== null ? sd["Pressure Drop 10m Percent"].toFixed(2) + '%' : 'N/A'}</td>
                         <td class="${sd["Flow Status"] === 'OK' ? 'status-ok' : 'status-no-ok'}">${sd["Flow Status"]}</td>
                     </tr>`;
         });
@@ -882,7 +894,7 @@ function downloadCSV() {
     const headers = [
         "Line TAG", "Line Type", "Line Fluid Type", "Selected Diameter ID", "DI (mm)", "DE (mm)", "Nominal Thickness (mm)",
         "Design Pressure (kgf/cm²g)", "Required Thickness (mm)", "Thickness Check Status", "Flow Check Status", 
-        "Mach Number", "Pressure Drop (bar/m)", "Overall Status", "Comments"
+        "Mach Number", "Pressure Drop (bar/m)", "Pressure Drop 10m Percent", "Overall Status", "Comments"
     ];
     let csv = headers.join(',') + '\n';
     allLineCalculationResults.forEach(row => {
