@@ -502,12 +502,15 @@ function performCalculations() {
             let stream_flow_status = "OK";
             let stream_comments = [];
             let mach_number = null;
-            let pressure_drop_bar_m = null;
             
             consoleOutput += `      - Verificación Hidráulica:\n`;
             consoleOutput += `          - Densidad Mezcla (ρ_m): ${mixture_density.toFixed(3)} kg/m³\n`;
             consoleOutput += `          - Velocidad (V): ${velocity_mps.toFixed(2)} m/s\n`;
             consoleOutput += `          - RhoV² (ρ_m * V²): ${rho_v2_calc.toFixed(2)} kg/m·s²\n`;
+
+            const { pressure_drop_bar_m, friction_factor, reynolds } = calculatePressureDrop(mixture_density, velocity_mps, di_meters, Viscosity_cP, designCriteria.pipe_roughness_mm);
+            max_dp_for_line = Math.max(max_dp_for_line, pressure_drop_bar_m);
+            consoleOutput += `          - Pérdida de Carga (dP/L): ${pressure_drop_bar_m.toExponential(3)} bar/m (Re: ${reynolds.toExponential(2)}, f: ${friction_factor.toFixed(4)})\n`;
 
             if (Type === "CF") {
                 let max_velocity_limit;
@@ -527,11 +530,6 @@ function performCalculations() {
                 
                 consoleOutput += `          - Vel. Sonido: ${speed_of_sound.toFixed(2)} m/s, Mach: ${mach_number.toFixed(3)}\n`;
                 if (mach_number > designCriteria.max_mach_vent_lines) { stream_flow_status = "NO OK"; stream_comments.push(`Mach excede límite`); }
-
-                const { pressure_drop_bar_m: dp, friction_factor, reynolds } = calculatePressureDrop(gas_density_at_cond, velocity_mps, di_meters, Viscosity_cP, designCriteria.pipe_roughness_mm);
-                pressure_drop_bar_m = dp;
-                max_dp_for_line = Math.max(max_dp_for_line, pressure_drop_bar_m);
-                consoleOutput += `          - Pérdida de Carga (dP/L): ${pressure_drop_bar_m.toExponential(3)} bar/m (Re: ${reynolds.toExponential(2)}, f: ${friction_factor.toFixed(4)})\n`;
             }
             
             if (stream_flow_status === "NO OK") {
@@ -543,7 +541,8 @@ function performCalculations() {
             line_stream_specific_results.push({
                  "Stream Name": streamName, "Velocity (m/s)": velocity_mps,
                  "RhoV2 (kg/m.s²)": rho_v2_calc, "Flow Status": stream_flow_status,
-                 "Mach Number": mach_number, "Pressure Drop (bar/m)": pressure_drop_bar_m
+                 "Mach Number": mach_number, 
+                 "Pressure Drop (bar/m)": pressure_drop_bar_m
             });
         }
 
@@ -559,7 +558,7 @@ function performCalculations() {
             "Flow Check Status": flow_check_status_overall,
             "Overall Status": line_overall_status, "Comments": line_comments_aggregated.join("; "),
             "Mach Number": Type === 'VL' ? max_mach_for_line : null,
-            "Pressure Drop (bar/m)": Type === 'VL' ? max_dp_for_line : null,
+            "Pressure Drop (bar/m)": max_dp_for_line,
             "Stream Details": line_stream_specific_results
         });
     }
@@ -664,7 +663,7 @@ function loadProcessConditionForEdit(event) {
     document.getElementById('pc-mw').value = stream.MW;
     document.getElementById('pc-z-factor').value = stream.Z_Factor;
     document.getElementById('pc-gamma').value = stream.Gamma;
-    // document.getElementById('pc-viscosity').value = stream.Viscosity_cP;
+    document.getElementById('pc-viscosity').value = stream.Viscosity_cP;
     document.getElementById('pc-light-liq-flow').value = stream.Light_Liquid_Flow_m3_D;
     document.getElementById('pc-light-liq-density').value = stream.Light_Liquid_Density_kg_m3;
     document.getElementById('pc-heavy-liq-flow').value = stream.Heavy_Liquid_Flow_m3_D;
@@ -1001,18 +1000,14 @@ function downloadPDF() {
 
         line['Stream Details'].forEach(sd => {
             checkNewPage(180);
-            const stream = currentProcessConditions[sd['Stream Name']];
-            const totalActualFlow = stream.Actual_Gas_Flow_m3_s + stream.Actual_Light_Liquid_Flow_m3_s + stream.Actual_Heavy_Liquid_Flow_m3_s;
             const flowBody = [
                 [{ content: `Verificación Hidráulica - Escenario: ${sd['Stream Name']}`, colSpan: 2, styles: { halign: 'center', fillColor: [230, 230, 230] } }],
                 ['Velocidad (V)', `${sd['Velocity (m/s)'].toFixed(2)} m/s`],
                 ['RhoV²', `${sd['RhoV2 (kg/m.s²)'].toFixed(2)} kg/m·s²`],
+                ['dP/L', `${sd['Pressure Drop (bar/m)'].toExponential(3)} bar/m`],
             ];
             if (sd['Mach Number'] !== null) {
                 flowBody.push(['Número de Mach', sd['Mach Number'].toFixed(3)]);
-            }
-            if (sd['Pressure Drop (bar/m)'] !== null) {
-                flowBody.push(['dP/L', `${sd['Pressure Drop (bar/m)'].toExponential(3)} bar/m`]);
             }
             flowBody.push(['Resultado Flujo', { content: sd['Flow Status'], styles: { textColor: sd['Flow Status'] === 'OK' ? [0, 128, 0] : [255, 0, 0] } }]);
             
@@ -1156,7 +1151,7 @@ document.addEventListener('DOMContentLoaded', () => {
             MW: parseFloat(document.getElementById('pc-mw').value) || 0,
             Z_Factor: parseFloat(document.getElementById('pc-z-factor').value) || 1,
             Gamma: parseFloat(document.getElementById('pc-gamma').value) || 1.3,
-            Viscosity_cP: 0.012, // Default value, will need UI element to edit this
+            Viscosity_cP: parseFloat(document.getElementById('pc-viscosity').value) || 0.012,
             Light_Liquid_Flow_m3_D: lightLiqFlow,
             Light_Liquid_Density_kg_m3: parseFloat(document.getElementById('pc-light-liq-density').value) || 0,
             Heavy_Liquid_Flow_m3_D: heavyLiqFlow,
