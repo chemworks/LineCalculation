@@ -1275,4 +1275,38 @@ document.addEventListener('DOMContentLoaded', () => {
             document.getElementById('results-section').style.display = 'none';
         }
     });
+
+    // --- Dark Mode Toggle ---
+    const darkModeToggle = document.getElementById('dark-mode-toggle');
+    const htmlElement = document.documentElement;
+    const themeIcon = darkModeToggle.querySelector('i');
+
+    const setTheme = (theme) => {
+        if (theme === 'dark') {
+            htmlElement.classList.add('dark-mode');
+            themeIcon.classList.remove('fa-moon');
+            themeIcon.classList.add('fa-sun');
+            localStorage.setItem('theme', 'dark');
+        } else {
+            htmlElement.classList.remove('dark-mode');
+            themeIcon.classList.remove('fa-sun');
+            themeIcon.classList.add('fa-moon');
+            localStorage.setItem('theme', 'light');
+        }
+    };
+
+    darkModeToggle.addEventListener('click', () => {
+        const currentTheme = htmlElement.classList.contains('dark-mode') ? 'light' : 'dark';
+        setTheme(currentTheme);
+    });
+
+    // Set initial theme based on saved preference or system setting
+    const savedTheme = localStorage.getItem('theme');
+    const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+
+    if (savedTheme) {
+        setTheme(savedTheme);
+    } else if (prefersDark) {
+        setTheme('dark');
+    }
 });
