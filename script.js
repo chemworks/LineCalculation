@@ -764,6 +764,7 @@ function loadLineForEdit(event) {
     
     form.dataset.originalTag = lineTag;
     document.getElementById('line-tag').focus();
+    suggestPipeDiameter();
 }
 
 function copyLine(event) {
@@ -889,6 +890,19 @@ function renderEngineeringListTable(results) {
 
 // --- Download Functions ---
 
+function getFormattedFileName(extension) {
+    const now = new Date();
+    const day = String(now.getDate()).padStart(2, '0');
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const year = now.getFullYear();
+    const dateStr = `${day}_${month}_${year}`;
+    
+    const projectName = projectInfo["Nombre del Proyecto"].replace(/[^a-z0-9]/gi, '_');
+    const projectNumber = projectInfo["Número de Proyecto"].replace(/[^a-z0-9]/gi, '_');
+
+    return `${projectNumber}-${projectName}-${dateStr}.${extension}`;
+}
+
 function downloadCSV() {
     if (allLineCalculationResults.length === 0) { alert("No hay datos para exportar."); return; }
     const headers = [
@@ -908,7 +922,7 @@ function downloadCSV() {
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
-    link.setAttribute('download', `${projectInfo["Número de Proyecto"] || 'proyecto'}_listado_ingenieria.csv`);
+    link.setAttribute('download', getFormattedFileName('csv'));
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -1037,7 +1051,7 @@ function downloadPDF() {
         finalY = doc.autoTable.previous.finalY + 25;
     });
 
-    doc.save(`${projectInfo["Número de Proyecto"]}_memoria_calculo_detallada.pdf`);
+    doc.save(getFormattedFileName('pdf'));
 }
 
 
@@ -1049,7 +1063,7 @@ function saveProjectData() {
     const blob = new Blob([dataStr], { type: 'application/json' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
-    link.download = `${projectInfo["Número de Proyecto"] || 'proyecto'}_data.json`;
+    link.download = getFormattedFileName('json');
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -1254,6 +1268,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const form = document.getElementById('line-form');
         form.reset();
         delete form.dataset.originalTag;
+        suggestPipeDiameter();
     });
     
     document.getElementById('delete-all-streams-btn').addEventListener('click', () => {
@@ -1321,4 +1336,89 @@ document.addEventListener('DOMContentLoaded', () => {
     } else if (prefersDark) {
         setTheme('dark');
     }
+
+    // --- Line Suggestion ---
+    document.getElementById('line-stream-name').addEventListener('change', suggestPipeDiameter);
+    document.getElementById('line-type').addEventListener('change', suggestPipeDiameter);
 });
+
+function suggestPipeDiameter() {
+    const suggestionEl = document.getElementById('line-suggestion-display');
+    const selectedStreamNames = Array.from(document.getElementById('line-stream-name').selectedOptions).map(opt => opt.value);
+    const lineType = document.getElementById('line-type').value;
+
+    if (selectedStreamNames.length === 0 || !lineType) {
+        suggestionEl.textContent = '';
+        return;
+    }
+
+    let maxRequiredDI_mm = 0;
+
+    for (const streamName of selectedStreamNames) {
+        const streamInfo = currentProcessConditions[streamName];
+        if (!streamInfo) continue;
+
+        const actualGasFlow = calculateActualFlowRateGas(streamInfo.Gas_Flow_Sm3_D, streamInfo.Pressure_kgf_cm2g, streamInfo.Temperature_C, streamInfo.Z_Factor);
+        const actualLLFlow = calculateActualFlowRateLiquid(streamInfo.Light_Liquid_Flow_m3_D);
+        const actualHLFlow = calculateActualFlowRateLiquid(streamInfo.Heavy_Liquid_Flow_m3_D);
+        const totalActualFlow = actualGasFlow + actualLLFlow + actualHLFlow;
+
+        if (totalActualFlow === 0) continue;
+        
+        const lineFluidType = getLineFluidType({ Stream_Names: [streamName] });
+        let requiredArea_m2 = 0;
+
+        if (lineType === 'VL') {
+            const { Temperature_C, MW, Z_Factor, Gamma } = streamInfo;
+            const temperature_k = Temperature_C + constants.CELSIUS_TO_KELVIN;
+            const mw_kg_mol = MW / 1000;
+            const speed_of_sound = calculateSpeedOfSound(Gamma, Z_Factor, temperature_k, mw_kg_mol);
+            const velocityLimit = designCriteria.max_mach_vent_lines * speed_of_sound;
+            if (velocityLimit > 0) {
+                requiredArea_m2 = totalActualFlow / velocityLimit;
+            }
+        } else {
+            let velocityLimit = 0;
+            if (lineFluidType === "Gas") velocityLimit = designCriteria.max_velocity_gas_mps;
+            else if (lineFluidType === "Líquido") velocityLimit = designCriteria.max_velocity_liquid_mps;
+            else velocityLimit = designCriteria.max_velocity_multiphase_mps;
+            
+            if (velocityLimit > 0) {
+                requiredArea_m2 = totalActualFlow / velocityLimit;
+            }
+        }
+        
+        if (requiredArea_m2 > 0) {
+            const requiredDI_m = Math.sqrt(4 * requiredArea_m2 / Math.PI);
+            const requiredDI_mm = requiredDI_m / constants.MM_TO_M;
+            if (requiredDI_mm > maxRequiredDI_mm) {
+                maxRequiredDI_mm = requiredDI_mm;
+            }
+        }
+    }
+
+    if (maxRequiredDI_mm === 0) {
+        suggestionEl.textContent = 'No se requiere diámetro (caudal cero).';
+        return;
+    }
+
+    let bestFit = null;
+    let minDifference = Infinity;
+
+    for (const id in diametersData) {
+        const pipe = diametersData[id];
+        if (pipe.DI_mm >= maxRequiredDI_mm) {
+            const difference = pipe.DI_mm - maxRequiredDI_mm;
+            if (difference < minDifference) {
+                minDifference = difference;
+                bestFit = id;
+            }
+        }
+    }
+
+    if (bestFit) {
+        suggestionEl.textContent = `Diámetro sugerido: ${bestFit} (DI: ${diametersData[bestFit].DI_mm}mm)`;
+    } else {
+        suggestionEl.textContent = 'El caudal es demasiado grande para los diámetros disponibles.';
+    }
+}
